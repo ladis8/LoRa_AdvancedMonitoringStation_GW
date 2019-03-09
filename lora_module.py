@@ -1,10 +1,13 @@
 #TODO: Read version
+#TODO: Refactor set_mode
 
 #works only in LoRa mode
 
 from enum import Enum
-from rpi_board import *
 import datetime
+
+from rpi_board import *
+from tools import *
 
 RSSI_COOR = 139
 
@@ -101,12 +104,6 @@ LNA_LOW_GAIN =		    	0x20
 
 
 
-def to_uint8t(b):
-    return b & 0xFF
-
-def set_bit(reg, index, val):
-    mask = 0x1 << index
-    return reg | mask if val else reg & ~mask
 
 
 def getter(register_address):
@@ -157,8 +154,7 @@ class SX1272_Module:
         self.rpi_board.pin_reset(self.rpi_board.RST)
 
         #set sleepmode
-        self.rpi_board.SPI_write_register(REG_LORA.OP_MODE, MODE.SLEEP.value)
-        self.mode = MODE.SLEEP
+        self.SX1272_set_mode(MODE.SLEEP)
 
 
         #set frequency
@@ -171,7 +167,7 @@ class SX1272_Module:
         self.SX1272_set_modem_config2(spreading_factor=config["spreading_factor"], tx_cont_mode=config["tx_cont_mode"])
 
         #set timout
-        self.SX1272_set_symb_timeout(config["symbol_timeout"])
+        #self.SX1272_set_symb_timeout(config["symbol_timeout"])
 
         #set sync word
         self.SX1272_set_syncword(config["sync_word"])
@@ -187,59 +183,71 @@ class SX1272_Module:
 
         print(self)
 
-        # set Continous Receive Mode
-        #self.mode = MODE.RXCONT
-        #self.rpi_board.SPI_write_register(REG_LORA.OP_MODE, MODE.RXCONT.value)
 
 
-    def check_packet(self):
-        self.SX1272_set_irq_flags(rx_done=1)
-        status = self.SX1272_get_irq_flags()
-
-        if status['crc_error']:
-            logging.error("CRC error in recieving packet...")
-            return None
-        else:
+    def read_rx_payload(self):
             current_addr = self.rpi_board.SPI_read_register(REG_LORA.FIFO_RX_CURR_ADDR)[1]
             received_bytes = self.rpi_board.SPI_read_register(REG_LORA.RX_NB_BYTES)[1]
             self.rpi_board.SPI_write_register(REG_LORA.FIFO_ADDR_PTR, current_addr)
+            return self.rpi_board.SPI_read_buffer(REG_LORA.FIFO, received_bytes)[1:received_bytes+1]
 
-            payload = []
-            for i in range(received_bytes):
-                payload.append(self.rpi_board.SPI_read_register(REG_LORA.FIFO)[1])
-            return payload
+    #In RX_CONTINUOUS mode RX Timout flag is never rised
+    def set_rx_continuous(self, rx_done_handler):
 
-    def receive_packet(self, timeout=20):
+        if self.mode == MODE.RXCONT:
+            return
 
+        assert self.mode == MODE.STDBY or self.mode == MODE.SLEEP
+        print("\nSetting rx...")
+        self.SX1272_set_dio1_mapping(dio0=0, dio3=3)
+        self.rpi_board.add_irq_handlers(dio0_irq_handler=rx_done_handler)
+        #self.SX1272_set_symb_timeout(timeout)
 
-        self.SX1272_set_dio1_mapping(dio0=0)
-        self.SX1272_set_mode(MODE.RXCONT.value)
-        self.mode = MODE.RXCONT
+        #set mode
+        self.SX1272_set_mode(MODE.RXCONT)
 
-        timestamp = datetime.datetime.now().replace(microsecond=0)
-        time_start = time.time()
-        while time.time() - time_start < timeout:
-            if self.rpi_board.pin_read(self.rpi_board.DIO0):
-                logging.info("%s : Receiver active...", timestamp)
-                self.received_packets += 1
-                payload = self.check_packet()
+        #timestamp = datetime.datetime.now().replace(microsecond=0)
+        #time_start = time.time()
+        # while time.time() - time_start < timeout:
+        #     if self.rpi_board.pin_read(self.rpi_board.DIO0):
+        #         logging.info("%s : Receiver active...", timestamp)
+        #         self.received_packets += 1
+        #         payload = self.check_packet()
+        #
+        #         if payload is not None:
+        #             self.received_packets_ok += 1
+        #             paket_SNR = self.get_paket_snr_value()
+        #             paket_RSII = self.get_packet_rssi_value()
+        #             RSII = self.SX1272_get_rsii_value()
+        #             #logging.info("Packet CRC OK: SNR= %s, packet RSII= %s, RSII= %s, length = %d, message = %s",
+        #             #             paket_SNR, paket_RSII, RSII, len(payload), "".join(chr(char) for char in payload) )
+        #             logging.info("Packet CRC OK: SNR= %s, packet RSII= %s, RSII= %s, length = %d, message = %s",
+        #                          paket_SNR, paket_RSII, RSII, len(payload), bytes(payload))
+        #             return payload
+        #
+        #         time.sleep(0.001)
+        # logging.debug("%s: Receiver inactive, timeout expired...", timestamp)
+        # return None
 
-                if payload is not None:
-                    self.received_packets_ok += 1
-                    paket_SNR = self.get_paket_snr_value()
-                    paket_RSII = self.get_packet_rssi_value()
-                    RSII = self.SX1272_get_rsii_value()
-                    #logging.info("Packet CRC OK: SNR= %s, packet RSII= %s, RSII= %s, length = %d, message = %s",
-                    #             paket_SNR, paket_RSII, RSII, len(payload), "".join(chr(char) for char in payload) )
-                    logging.info("Packet CRC OK: SNR= %s, packet RSII= %s, RSII= %s, length = %d, message = %s",
-                                 paket_SNR, paket_RSII, RSII, len(payload), bytes(payload))
-                    return payload
+    #TODO: CAD check
+    def set_tx(self, tx_done_handler, radio_packet):
+        print("\nSetting tx...")
+        assert len(radio_packet) < 256
+        self.SX1272_set_dio1_mapping(dio0=1, dio1=0, dio3=3)
+        self.rpi_board.add_irq_handlers(dio0_irq_handler=tx_done_handler)
+        self.rpi_board.SPI_write_register(REG_LORA.PAYLOAD_LENGTH, len(radio_packet))
+        self.rpi_board.SPI_write_register(REG_LORA.FIFO_TX_BASE_ADDR, 0)
+        self.rpi_board.SPI_write_register(REG_LORA.FIFO_ADDR_PTR, 0)
 
-                time.sleep(0.001)
-        logging.debug("%s: Receiver inactive, timeout expired...", timestamp)
-        return None
+        #set mode
+        self.SX1272_set_mode(MODE.STDBY)
+        self.rpi_board.SPI_write_buffer(REG_LORA.FIFO, list(radio_packet.rawdata))
 
-    def send_packet(self, payload):
+        #set mode for TX
+        self.SX1272_set_mode(MODE.TX)
+        logging.debug("Transmit packet prepared for sending...")
+
+    def send_packet_deprecated(self, payload):
 
         assert len(payload) < 256
         #SX1272Write(REG_LR_PAYLOADLENGTH, size);
@@ -269,8 +277,7 @@ class SX1272_Module:
 
 
     def reset_ptr_rx(self):
-        self.mode = MODE.STDBY
-        self.SX1272_set_mode(MODE.STDBY.value)
+        self.SX1272_set_mode(MODE.STDBY)
         self.rpi_board.SPI_write_register(REG_LORA.FIFO_ADDR_PTR, self.rpi_board.SPI_read_register(REG_LORA.FIFO_RX_BASE_ADDR)[1])
 
 
@@ -356,8 +363,6 @@ class SX1272_Module:
         self.rpi_board.SPI_write_register(REG_LORA.DIO_MAPPING_1, val)
 
 
-
-
     def SX1272_get_symb_timeout(self):
         SYMB_TIMEOUT_MSB = REG_LORA.MODEM_CONFIG_2
         msb = self.rpi_board.SPI_read_register(SYMB_TIMEOUT_MSB)[1] & 0x3
@@ -373,6 +378,16 @@ class SX1272_Module:
         self.rpi_board.SPI_write_register(REG_LORA.SYMB_TIMEOUT_LSB, lsb)
 
 
+    def SX1272_set_mode(self, mode):
+        self.mode = mode
+        self.rpi_board.SPI_write_register(REG_LORA.OP_MODE, mode.value)
+
+    def SX1272_get_mode(self, assertion=True):
+        if assertion:
+            assert self.rpi_board.SPI_read_register(REG_LORA.OP_MODE)[1] == self.mode.value
+        return self.mode.value
+
+
     def SX1272_get_irq_flags(self):
         v = self.rpi_board.SPI_read_register(REG_LORA.IRQ_FLAGS)[1]
         return dict(
@@ -386,9 +401,10 @@ class SX1272_Module:
             cad_detected=v >> 0 & 0x01,
         )
 
-    def SX1272_set_irq_flags(self,
-                           rx_timeout=None, rx_done=None, crc_error=None, valid_header=None, tx_done=None,
-                           cad_done=None, fhss_change_ch=None, cad_detected=None):
+
+    def SX1272_clear_irq_flags(self,
+                               rx_timeout=None, rx_done=None, crc_error=None, valid_header=None, tx_done=None,
+                               cad_done=None, fhss_change_ch=None, cad_detected=None):
 
         reg = self.rpi_board.SPI_read_register(REG_LORA.IRQ_FLAGS)[1]
         for i, s in enumerate(['cad_detected', 'fhss_change_ch', 'cad_done', 'tx_done', 'valid_header',
@@ -410,13 +426,13 @@ class SX1272_Module:
             signal_detected=status >> 0 & 0x01
         )
 
-    def get_paket_snr_value(self):
+    def get_packet_snr_value(self):
         value = self.rpi_board.SPI_read_register(REG_LORA.PKT_SNR_VALUE)[1]
         return -float(~value + 1)/4. if value & 0x80 else float(value)/4.
 
     def get_packet_rssi_value(self):
         value = self.rpi_board.SPI_read_register(REG_LORA.PKT_RSSI_VALUE)[1]
-        return  value - RSSI_COOR
+        return value - RSSI_COOR
 
     @getter(REG_LORA.VERSION)
     def get_version(self, val):
@@ -425,15 +441,6 @@ class SX1272_Module:
     @getter(REG_LORA.RSSI_VALUE)
     def SX1272_get_rsii_value(self, val):
         return val[1] - RSSI_COOR
-
-
-    @setter(REG_LORA.OP_MODE)
-    def SX1272_set_mode(self, mode):
-        return mode
-
-    @getter(REG_LORA.OP_MODE)
-    def SX1272_get_mode(self, val):
-        return val[1]
 
     @setter(REG_LORA.SYNC_WORD)
     def SX1272_set_syncword(self, sync_word):

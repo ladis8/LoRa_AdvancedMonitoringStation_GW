@@ -15,10 +15,12 @@ SPI_bus = 0
 class RPI_BOARD:
 
     # ss_pin = 6
-    dio0_pin = 7  # BCM 4
-    RST_pin = 0
+    #dio0_pin = 7  # BCM 4
+    #RST_pin = 0
 
     DIO0 = 4
+    DIO1 = 27
+    DIO3 = 22
     RST = 17
     LED = 18
 
@@ -26,14 +28,13 @@ class RPI_BOARD:
 
 
     def __init__(self):
-        pass
-        #self.io_setup()
+        self.io_setup()
         #self.lcd = CharLCD(cols = 16, rows = 2, pin_rs = 33, pin_e = 35, pins_data=[37, 36, 40, 38], numbering_mode=GPIO.BCM)
         #self.lcd.write_string(u"LoRa node id=5 connected!")
 
 
     @staticmethod
-    def io_setup(dio0_irq_handler):
+    def io_setup():
         #wiringpi.wiringPiSetup()
         #wiringpi.wiringPiSPISetup(SPI_channel, SPI_speed)
         #wiringpi.pinMode(dio0_pin, 0)
@@ -48,6 +49,8 @@ class RPI_BOARD:
         #RST, DIO
         GPIO.setup(RPI_BOARD.RST, GPIO.OUT)
         GPIO.setup(RPI_BOARD.DIO0, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+        GPIO.setup(RPI_BOARD.DIO1, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+        GPIO.setup(RPI_BOARD.DIO3, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
 
     @staticmethod
     def spi_setup():
@@ -56,9 +59,24 @@ class RPI_BOARD:
         RPI_BOARD.SPI.max_speed_hz = SPI_speed  # SX127x can go up to 10MHz, pick half that to be safe
 
     @staticmethod
-    def add_irq_handlers(dio0_irq_handler = None):
+    def add_irq_handlers(dio0_irq_handler=None, dio1_irq_handler=None, dio3_irq_handler=None):
         if dio0_irq_handler is not None:
-            GPIO.add_event_detect(RPI_BOARD.DIO0, GPIO.RISING, callback=dio0_irq_handler)
+            try:
+                GPIO.remove_event_detect(RPI_BOARD.DIO0)
+            finally:
+                GPIO.add_event_detect(RPI_BOARD.DIO0, GPIO.RISING, callback=dio0_irq_handler)
+
+        if dio1_irq_handler is not None:
+            try:
+                GPIO.remove_event_detect(RPI_BOARD.DIO1)
+            finally:
+                GPIO.add_event_detect(RPI_BOARD.DIO1, GPIO.RISING, callback=dio1_irq_handler)
+
+        if dio3_irq_handler is not None:
+            try:
+                GPIO.remove_event_detect(RPI_BOARD.DIO3)
+            finally:
+                GPIO.add_event_detect(RPI_BOARD.DIO3, GPIO.RISING, callback=dio3_irq_handler)
 
     @staticmethod
     def pin_write (pin, value):
@@ -89,6 +107,14 @@ class RPI_BOARD:
         RPI_BOARD.SPI.xfer2([reg_addr] + buffer)[1]
 
     @staticmethod
+    def SPI_read_buffer(reg_addr, length):
+        if reg_addr > 0xFF:
+            logging.error("Address not within range")
+            return None
+        reg_addr &= 0x7F
+        return RPI_BOARD.SPI.xfer2([reg_addr] + [0x00] * length)
+
+    @staticmethod
     def SPI_write_register(reg_addr, value):
         if reg_addr > 0xFF or value > 0xFF:
             logging.error("Address not within range or values overflow")
@@ -98,9 +124,9 @@ class RPI_BOARD:
     @staticmethod
     def SPI_read_register(reg_addr):
         if reg_addr > 0xFF:
-            logging.error("SPI writes only one byte")
+            logging.error("Address not within range")
             return None
-        reg_addr&= 0x7F
+        reg_addr &= 0x7F
         return RPI_BOARD.SPI.xfer([reg_addr, 0x00])
 
 
