@@ -2,7 +2,7 @@ import binascii
 from struct import pack, unpack
 import json
 
-#TODO: Soleve nsamples
+# TODO: Soleve nsamples
 
 PAT_UINT64 = "Q"
 PAT_UINT32 = "I"
@@ -12,9 +12,9 @@ PAT_FLOAT = "f"
 PAT_STR8 = "8s"
 
 
-#[0] CMD
-#[1] ID
-#[2] DATA_TYPE !OPTIONAL
+# [0] CMD
+# [1] ID
+# [2] DATA_TYPE !OPTIONAL
 class RadioPacket():
     RES_RESULT_OK = 0,
     RES_ERROR = 1,
@@ -33,7 +33,8 @@ class RadioPacket():
                             if self.rawdata[2] == sensor_dt.DATA_TYPE:
                                 self.__class__ = sensor_dt
                                 return
-                        raise NameError("Sensor class not found for data_type", self.rawdata[2], "data len", len(self.rawdata))
+                        raise NameError("Sensor class not found for data_type", self.rawdata[2], "data len",
+                                        len(self.rawdata))
                     else:
                         self.__class__ = x
                         return
@@ -66,13 +67,11 @@ class RadioPacket():
         if isinstance(other, bytes) or isinstance(other, bytearray):
             return other + self.rawdata
 
-
     def toHexString(self):
         return binascii.hexlify(self.rawdata).decode()
 
     def name(self):
         return self.__class__.__name__
-
 
 
 class Hello(RadioPacket):
@@ -83,9 +82,9 @@ class Hello(RadioPacket):
         self.rawdata.extend(bytearray(1 + 2 + 4))
 
 
-
 class JoinRequest(RadioPacket):
     CMD = 0x10
+
     def __init__(self):
         super().__init__()
         self.rawdata.extend(bytearray(4 + 1))
@@ -106,12 +105,13 @@ class JoinRequest(RadioPacket):
     def fwver(self, value):
         self.rawdata[6] = value
 
+#TODO: move application mode up
 class JoinReply(RadioPacket):
     CMD = 0x01
 
     def __init__(self):
         super().__init__()
-        self.rawdata.extend(bytearray(1 + 3*1 + 2*2))
+        self.rawdata.extend(bytearray(1 + 3 * 1 + 2 + 1))
 
     @property
     def result(self):
@@ -123,7 +123,7 @@ class JoinReply(RadioPacket):
 
     @property
     def bw(self):
-        return  self.rawdata[3]
+        return self.rawdata[3]
 
     @bw.setter
     def bw(self, value):
@@ -154,29 +154,124 @@ class JoinReply(RadioPacket):
         self.rawdata[6:8] = pack(PAT_UINT16, value)
 
     @property
+    def app_mode(self):
+        return self.rawdata[8]
+
+    @app_mode.setter
+    def app_mode(self, value):
+        self.rawdata[8] = value
+
+
+class JoinReplyCommandMode(JoinReply):
+    pass
+
+
+# TODO: restrictions in size
+
+class JoinReplyStatusMode(JoinReply):
+    def __init__(self):
+        super().__init__()
+        self.rawdata.extend(bytearray(2 + 2 + 4))
+        self.app_mode = 0
+
+    @property
     def status_interval(self):
-        return unpack(PAT_UINT16, self.rawdata[8:10])[0]
+        return unpack(PAT_UINT16, self.rawdata[9:11])[0]
 
     @status_interval.setter
     def status_interval(self, value):
-        self.rawdata[8:10] = pack(PAT_UINT16, value)
+        self.rawdata[9:11] = pack(PAT_UINT16, value)
+
+    @property
+    def rms_averaging_num(self):
+        return self.rawdata[11]
+
+    @rms_averaging_num.setter
+    def rms_averaging_num(self, value):
+        assert value <= 10
+        self.rawdata[11] = value
+
+    @property
+    def temperature_averaging_num(self):
+        return self.rawdata[12]
+
+    @temperature_averaging_num.setter
+    def temperature_averaging_num(self, value):
+        assert value <= 10
+        self.rawdata[12] = value
+
+    @property
+    def fft_N(self):
+        return self.rawdata[13]
+
+    @fft_N.setter
+    def fft_N(self, value):
+        self.rawdata[13] = value
+
+    @property
+    def fft_adc_samplings(self):
+        return self.rawdata[14]
+
+    @fft_adc_samplings.setter
+    def fft_adc_samplings(self, value):
+        self.rawdata[14] = value
+
+    @property
+    def fft_adc_divider(self):
+        return self.rawdata[15]
+
+    @fft_adc_divider.setter
+    def fft_adc_divider(self, value):
+        self.rawdata[15] = value
+
+    @property
+    def fft_peaks_num(self):
+        return self.rawdata[16]
+
+    @fft_peaks_num.setter
+    def fft_peaks_num(self, value):
+        assert value <= 10
+        self.rawdata[16] = value
 
 
 class StatusInfo(RadioPacket):
-    CMD = 0x02 # StatusInfo.CMD
+    CMD = 0x20  # StatusInfo.CMD
 
     def __init__(self):
         super().__init__()
         self.rawdata.extend(bytearray(0))
 
+    #region measurments
+    @property
+    def battery(self):
+        return self.rawdata[2]
 
+    @property
+    def rms(self):
+        return unpack(PAT_FLOAT, self.rawdata[3:7])[0]
 
+    @property
+    def temperature(self):
+        return unpack(PAT_FLOAT, self.rawdata[7:11])[0]
+
+    @property
+    def fft_peaks_num(self):
+        return self.rawdata[11]
+
+    @property
+    def fft_peaks_indexes(self):
+        peaks = []
+        for i in range(self.fft_peaks_num):
+            index = unpack(PAT_UINT16, self.rawdata[12+i*2:12+(i+1)*2])[0]
+            peaks.append(index)
+        return peaks
 
 
 
 class SensorDataRequest(RadioPacket):
     CMD = 0x03
     DATA_TYPE = 0x00
+
     def __init__(self):
         super().__init__()
         self.rawdata.extend(bytearray(1 + 1))
@@ -190,6 +285,7 @@ class SensorDataRequest(RadioPacket):
     @data_type.setter
     def data_type(self, value):
         self.rawdata[2] = value
+
     @property
     def nsamples(self):
         return self.rawdata[3]
@@ -198,9 +294,10 @@ class SensorDataRequest(RadioPacket):
     def nsamples(self, value):
         self.rawdata[3] = value
 
-class TemperatureDataRequest(SensorDataRequest):
 
+class TemperatureDataRequest(SensorDataRequest):
     DATA_TYPE = 0x01
+
     def __init__(self):
         super().__init__()
 
@@ -287,16 +384,14 @@ class TemperatureData(SensorDataReply):
     def temperature(self):
         return unpack(PAT_UINT16, self.rawdata[9:11])[0]
 
-    # @temperature.setter
-    # def temperature(self, value):
-    #     self.rawdata[8:10] = pack(PAT_UINT16, value)
+        # @temperature.setter
+        # def temperature(self, value):
+        #     self.rawdata[8:10] = pack(PAT_UINT16, value)
 
 
-
-#region DATA CHUNKS
+# region DATA CHUNKS
 
 class FFTChunkRequest(RadioPacket):
-
     CMD = 0x04
     DATA_TYPE = 0x01
 
@@ -313,7 +408,6 @@ class FFTChunkRequest(RadioPacket):
         self.rawdata[2] = value
 
 
-
 class FFTChunkData(RadioPacket):
     CMD = 0x40
     DATA_TYPE = 0x01
@@ -321,7 +415,7 @@ class FFTChunkData(RadioPacket):
     def __init__(self):
         super().__init__()
         self.rawdata.extend(bytearray(3))  # data_type, seqnum, nsamples
-        self.rawdata.extend(bytearray(128)) #chunksize
+        self.rawdata.extend(bytearray(128))  # chunksize
         if self.DATA_TYPE:
             self.rawdata[2] = self.DATA_TYPE
 
@@ -347,11 +441,11 @@ class FFTChunkData(RadioPacket):
 
     def get_FFT_bins(self):
         fft_bins = []
-        for i in range(128//4):
-            fft_bins.append(unpack(PAT_FLOAT, self.rawdata[9 + i*4: 9+i*4+4])[0])
+        for i in range(128 // 4):
+            fft_bins.append(unpack(PAT_FLOAT, self.rawdata[9 + i * 4: 9 + i * 4 + 4])[0])
         return fft_bins
 
     def getTypeName(self):
         return "FFT"
-#endregion
 
+# endregion

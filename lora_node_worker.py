@@ -11,6 +11,10 @@ from packet_forwarder import Gateway
 import tools
 
 
+
+APPLICATION_MODE = 0 #status mode
+
+
 class States(enum.IntEnum):
     STOPPED = 0
     JOINING = 10
@@ -29,8 +33,11 @@ class NodeWorker:
     MAIN_LOOP_SLEEP = 0.1
     DEBUG = True
 
+    def getId(self):
+        return self.id
+
     def __init__(self, tx_queue):
-        self.id = None
+        self.id = 0x08
         self.name = "LORA_WORKER ??"
         self.state = States.JOINING
         self.rx_queue = Queue()
@@ -103,11 +110,23 @@ class NodeWorker:
         self.tx_queue.put(req)
         self.state = States.EXPECTING_CHUNK
 
+    #TODO: get join configuration from database
     def send_join_reply(self):
-        jr = rp.JoinReply()
-        jr.id = self.id
-        jr.result = 1
-        jr.status_interval = 30000
+
+        if APPLICATION_MODE == 0:
+            jr = rp.JoinReplyStatusMode()
+            jr.id = self.id
+            jr.result = 1
+            jr.bw = 0
+            jr.sf = 7
+            jr.cr = 3
+            jr.status_interval = 15000
+            jr.rms_averaging_num = 1
+            jr.temperature_averaging_num = 1
+            jr.fft_N = 1
+            jr.fft_adc_divider = 1
+            jr.fft_adc_samplings = 3
+            jr.fft_peaks_num = 5
         self.tx_queue.put(jr)
         self.state = States.JOINED
 
@@ -138,22 +157,26 @@ class NodeWorker:
             self.extendTimeout()
             if self.state == States.JOINING:
                 if isinstance(rec, rp.JoinRequest):
-                    self.id = rec.id
-                    self.start_time = rec.time
+                    assert rec.id == 0x00
                     self.name = "LORA_WORKER " + str(self.id)
+                    self.start_time = rec.time
                     self.send_join_reply()
-                    logging.info("%s: Joining LoRa node success - %s\n", self.name, self.start_time)
+                    logging.info("%s: Received JOIN PACKET - node is running - %s\n", self.name, self.start_time)
                     self.state = States.JOINED
-
                     self.t.start()
                 else:
-                    logging.error("%s: Joining failed, unexpected packet %s\n", self.name, rec.name())
+                    logging.error("%s: Received unexpected packet %s, STATE=JOINING\n", self.name, rec.name())
                     self.state = States.ERROR
 
             elif self.state == States.JOINED:
-                pass
-            elif self.state == States.EXPECTING_CHUNK:
+                if isinstance(rec, rp.StatusInfo):
+                    assert rec.id == self.id
+                    logging.info("%s: Received STATUS INFO packet: \n temp: %f bat: %d rms: %f peaks: %s",
+                                 self.name, rec.temperature, rec.battery, rec.rms, "".join(str(fft_peak) for fft_peak in rec.fft_peaks_indexes))
+                else:
+                    logging.error("%s: Received unexpected packet %s, STATE=JOINED\n", self.name, rec.name())
 
+            elif self.state == States.EXPECTING_CHUNK:
                 if isinstance(rec, rp.FFTChunkData):
                     self.fft_buffer[rec.seqnum * 32: rec.seqnum * 32 + 32] = rec.get_FFT_bins()
                     if rec.seqnum == FFT_NUM_OF_CHUNKS - 1: #32 fft chunks in total
@@ -165,7 +188,7 @@ class NodeWorker:
                     self.last_temperature = rec.temperature
                     logging.info("Temperature packet received...")
                 else:
-                    logging.error("%s:Unexpected packet:%s", self.name, rec.name)
+                    logging.error("%s:unexpected packet:%s", self.name, rec.name)
 
             else:
                 logging.error("%s:Unexpected condition :%s", self.name, rec.packet)
@@ -182,6 +205,6 @@ class NodeWorker:
 
     def request_fft(self):
         print("FFT callback called...")
-        self.send_fft_req()
+        #self.send_fft_req()
 
 

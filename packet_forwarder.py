@@ -58,7 +58,7 @@ class Gateway():
 
 def on_tx_done(channel):
     irq_flags = Gateway.module.SX1272_get_irq_flags()
-    logging.debug("DIO0 IRQ ON TX DONE handler - Flags: %s", irq_flags)
+    #logging.debug("DIO0 IRQ ON TX DONE handler - Flags: %s", irq_flags)
     Gateway.module.SX1272_clear_irq_flags(tx_done=1)
     Gateway.module.SX1272_set_mode(lm.MODE.SLEEP)
     Gateway.state = States.IDLE
@@ -68,7 +68,7 @@ def on_rx_done(channel=None):
     m = Gateway.module
     logging.info("On RX Done")
     irq_flags = m.SX1272_get_irq_flags()
-    logging.debug("DIO0 IRQ ON RX DONE handler - Flags: %s", irq_flags)
+    #logging.debug("DIO0 IRQ ON RX DONE handler - Flags: %s", irq_flags)
 
     # TODO: assert for lora module state
     if m.mode == lm.MODE.RXCONT:
@@ -77,7 +77,7 @@ def on_rx_done(channel=None):
             logging.error("CRC ERROR WAS DETECTED!!!")
             Gateway.state = States.IDLE
             return
-        logging.info("Receiver active...")
+
         m.received_packets += 1
         payload = m.read_rx_payload()
         paket_SNR = m.get_packet_snr_value()
@@ -89,12 +89,15 @@ def on_rx_done(channel=None):
         #             paket_SNR, paket_RSII, RSII, len(payload), bytes(payload))
 
         rp = radio_packet.RadioPacket(payload)
-        if not rp.id in Gateway.nodes:
+        if rp.id == 0x00:
             node_worker = lnw.NodeWorker(Gateway.tx_queue)
+            node_worker.rx_queue.put(rp)
             node_worker.start()
-            Gateway.nodes[rp.id] = node_worker
-
-        Gateway.nodes[rp.id].rx_queue.put(rp)
+            Gateway.nodes[node_worker.getId()] = node_worker
+        elif rp.id not in Gateway.nodes:
+            logging.error("Packed filterd, received packet with unknown seassion id %s", rp.id)
+        else:
+            Gateway.nodes[rp.id].rx_queue.put(rp)
 
         m.SX1272_set_mode(lm.MODE.SLEEP)
         Gateway.state = States.IDLE
