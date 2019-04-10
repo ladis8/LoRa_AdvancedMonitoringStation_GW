@@ -53,6 +53,7 @@ class Gateway():
     state = States.IDLE
     tx_queue = Queue()
     nodes = {}
+    nat = {}
     RX_TIMEOUT = 10
 
 
@@ -80,24 +81,31 @@ def on_rx_done(channel=None):
 
         m.received_packets += 1
         payload = m.read_rx_payload()
-        paket_SNR = m.get_packet_snr_value()
-        paket_RSII = m.get_packet_rssi_value()
+        packet_SNR = m.get_packet_snr_value()
+        packet_RSII = m.get_packet_rssi_value()
         RSII = m.SX1272_get_rsii_value()
         logging.debug("Packet CRC OK: SNR= %s, packet RSII= %s, RSII= %s, length = %d, message = %s",
-                     paket_SNR, paket_RSII, RSII, len(payload), "".join("\\x{:02x}".format(x) for x in payload))
+                     packet_SNR, packet_RSII, RSII, len(payload), "".join("\\x{:02x}".format(x) for x in payload))
         # logging.info("Packet CRC OK: SNR= %s, packet RSII= %s, RSII= %s, length = %d, message = %s",
         #             paket_SNR, paket_RSII, RSII, len(payload), bytes(payload))
 
         rp = radio_packet.RadioPacket(payload)
-        if rp.id == 0x00:
-            node_worker = lnw.NodeWorker(Gateway.tx_queue)
+        rp.snr = packet_SNR
+        rp.rsii = packet_RSII
+        if rp.sessionid == 0x00:
+            node_worker = lnw.NodeWorker(Gateway.tx_queue, Gateway.nat)
             node_worker.rx_queue.put(rp)
             node_worker.start()
-            Gateway.nodes[node_worker.getId()] = node_worker
-        elif rp.id not in Gateway.nodes:
-            logging.error("Packed filterd, received packet with unknown seassion id %s", rp.id)
+
+            Gateway.nodes[rp.unique_id] = node_worker
+
+        elif rp.sessionid not in Gateway.nat:
+            logging.error("Packed filterd, received packet with unknown seassion id %s", rp.sessionid)
         else:
-            Gateway.nodes[rp.id].rx_queue.put(rp)
+            logging.info("Received packet with seassion id %s", rp.sessionid)
+            address = Gateway.nat[rp.sessionid]
+            node = Gateway.nodes[address]
+            node.rx_queue.put(rp)
 
         m.SX1272_set_mode(lm.MODE.SLEEP)
         Gateway.state = States.IDLE
@@ -129,7 +137,8 @@ def loop():
     timeout = None
 
     while True:
-        if Gateway.state == States.IDLE and not Gateway.tx_queue.empty():
+        #TODO: check channel detection
+        if (Gateway.state == States.IDLE or Gateway.state == States.RX_RUNNING) and not Gateway.tx_queue.empty():
             Gateway.module.set_tx(on_tx_done, Gateway.tx_queue.get())
             Gateway.state = States.TX_RUNNING
 

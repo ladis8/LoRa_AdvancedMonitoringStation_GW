@@ -26,6 +26,8 @@ class RadioPacket():
         if data:
             self.command = data[0]
             self.rawdata = bytes(data)
+            self.rsii = None
+            self.snr = None
             for x in RadioPacket.__subclasses__():
                 if x.CMD == self.command:
                     if self.command == SensorDataReply.CMD:
@@ -39,16 +41,17 @@ class RadioPacket():
                         self.__class__ = x
                         return
             raise NameError("Packet class not found for command ", self.command)
+
         else:
             self.rawdata = bytearray(2)
             self.rawdata[0] = self.__class__.CMD
 
     @property
-    def id(self):
+    def sessionid(self):
         return self.rawdata[1]
 
-    @id.setter
-    def id(self, value):
+    @sessionid.setter
+    def sessionid(self, value):
         self.rawdata[1] = value
 
     def __str__(self):
@@ -90,20 +93,17 @@ class JoinRequest(RadioPacket):
         self.rawdata.extend(bytearray(4 + 1))
 
     @property
-    def time(self):
-        return unpack(PAT_UINT32, self.rawdata[2:6])[0]
+    def unique_id(self):
+        return "0x{0:08X}".format(unpack(PAT_UINT32, self.rawdata[2:6])[0])
 
-    @time.setter
-    def time(self, value):
-        self.rawdata[2:6] = pack(PAT_UINT32, value)
+    @property
+    def time(self):
+        return unpack(PAT_UINT32, self.rawdata[6:10])[0]
 
     @property
     def fwver(self):
-        return self.rawdata[6]
+        return self.rawdata[11]
 
-    @fwver.setter
-    def fwver(self, value):
-        self.rawdata[6] = value
 
 #TODO: move application mode up
 class JoinReply(RadioPacket):
@@ -175,11 +175,11 @@ class JoinReplyStatusMode(JoinReply):
         self.app_mode = 0
 
     @property
-    def status_interval(self):
+    def statusinfo_interval(self):
         return unpack(PAT_UINT16, self.rawdata[9:11])[0]
 
-    @status_interval.setter
-    def status_interval(self, value):
+    @statusinfo_interval.setter
+    def statusinfo_interval(self, value):
         self.rawdata[9:11] = pack(PAT_UINT16, value)
 
     @property
@@ -201,19 +201,19 @@ class JoinReplyStatusMode(JoinReply):
         self.rawdata[12] = value
 
     @property
-    def fft_N(self):
+    def fft_samples_num(self):
         return self.rawdata[13]
 
-    @fft_N.setter
-    def fft_N(self, value):
+    @fft_samples_num.setter
+    def fft_samples_num(self, value):
         self.rawdata[13] = value
 
     @property
-    def fft_adc_samplings(self):
+    def fft_adc_sampling_time(self):
         return self.rawdata[14]
 
-    @fft_adc_samplings.setter
-    def fft_adc_samplings(self, value):
+    @fft_adc_sampling_time.setter
+    def fft_adc_sampling_time(self, value):
         self.rawdata[14] = value
 
     @property
@@ -261,10 +261,30 @@ class StatusInfo(RadioPacket):
     @property
     def fft_peaks_indexes(self):
         peaks = []
+        lastindex = 12
         for i in range(self.fft_peaks_num):
-            index = unpack(PAT_UINT16, self.rawdata[12+i*2:12+(i+1)*2])[0]
+            index = unpack(PAT_UINT16, self.rawdata[lastindex+i*2 : lastindex+(i+1)*2])[0]
             peaks.append(index)
         return peaks
+
+    @property
+    def fft_peaks_values(self):
+        peaks = []
+        lastindex = 12 + self.fft_peaks_num * 2
+        for i in range(self.fft_peaks_num):
+            value = unpack(PAT_FLOAT, self.rawdata[lastindex+i*4 : lastindex+(i+1)*4])[0]
+            peaks.append(value)
+        return peaks
+
+    def get_fft_peaks(self):
+        peaks = []
+        fft_peaks_indexes = self.fft_peaks_indexes
+        fft_peaks_values = self.fft_peaks_values
+        for i in range(self.fft_peaks_num):
+            peaks.append((fft_peaks_indexes[i], fft_peaks_values[i]))
+        return sorted(peaks)
+
+
 
 
 

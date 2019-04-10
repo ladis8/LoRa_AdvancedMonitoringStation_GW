@@ -6,11 +6,24 @@ from queue import Queue, Empty
 from threading import Timer
 import enum
 
+
+
 import radio_packet as rp
+import config as cfg
+import params as prm
 from packet_forwarder import Gateway
 import tools
 
+import socket
+import requests
+import json
+import datetime
 
+
+
+IP = "127.0.0.1"
+PORT = 8888
+URL_STATUSINFO = "http://127.0.0.1:1880/lora_nodered/statusinfo"
 
 APPLICATION_MODE = 0 #status mode
 
@@ -25,7 +38,8 @@ class States(enum.IntEnum):
 
 FFT_NUM_OF_CHUNKS = 32
 
-#TODO: Question prideleni id
+
+
 class NodeWorker:
     """Communication with lora node"""
 
@@ -33,15 +47,21 @@ class NodeWorker:
     MAIN_LOOP_SLEEP = 0.1
     DEBUG = True
 
-    def getId(self):
-        return self.id
+    def get_id(self):
+        return self.params.idloranode
 
-    def __init__(self, tx_queue):
-        self.id = 0x08
+    def __init__(self, tx_queue, nat):
         self.name = "LORA_WORKER ??"
-        self.state = States.JOINING
         self.rx_queue = Queue()
         self.tx_queue = tx_queue
+        self.nat = nat
+
+        #config
+        self.config = cfg.Config()
+
+        #params
+        self.params = prm.Params()
+
 
         self.start_time = 0
         self.fft_buffer = [0] * 1024
@@ -52,6 +72,11 @@ class NodeWorker:
         self.worker_thread.setDaemon(True)
 
         self.statusInfoPeriod = NodeWorker.TIMEOUT
+
+        #socket connection
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+        #http connection
 
         self.cntNet = 0
         self.cntNetErr = 0
@@ -66,7 +91,64 @@ class NodeWorker:
         if NodeWorker.DEBUG:
             logging.info("+++ New lora node worker...")
 
-        self.t = Timer(5.0, self.request_fft)
+    def HTTP_send_data(self, statusinfo_rp):
+        message = {}
+        message['idloranode'] = self.get_id()
+        message['battery'] = statusinfo_rp.battery
+        message['rms'] = statusinfo_rp.rms
+        message['temperature'] = statusinfo_rp.temperature
+        message['fftPeaks'] = json.dumps(statusinfo_rp.get_fft_peaks())
+        message['fs'] = self.config.get_fft_params()[0]
+        message['N'] = self.config.get_fft_params()[1]
+        message['rsii'] = statusinfo_rp.snr
+        message['snr'] = statusinfo_rp.rsii
+        message['timestamp'] = str(datetime.datetime.now().replace(microsecond=0))
+
+        req = requests.post(url=URL_STATUSINFO, data=message)
+        out = (req.status_code, req.reason)
+        logging.debug("Data was successfully sent to node-red server %s", out)
+
+
+
+    def UDP_send_data(self, statusinfo_rp):
+        message = {}
+        message['idloranode'] = self.get_id()
+        message['battery'] = statusinfo_rp.battery
+        message['rms'] = statusinfo_rp.rms
+        message['temperature'] = statusinfo_rp.temperature
+        message['fftPeaks'] = json.dumps(statusinfo_rp.get_fft_peaks())
+        message['fs'] = self.config.get_fft_params()[0]
+        message['N'] = self.config.get_fft_params()[1]
+        message['rsii'] = statusinfo_rp.snr
+        message['snr'] = statusinfo_rp.rsii
+        message['timestamp'] = str(datetime.datetime.now().replace(microsecond=0))
+
+        self.socket.sendto(json.dumps(message).encode('ascii'), (IP, PORT))
+        logging.debug("Data was successfully sent to node-red server")
+
+
+    def send_fft_req(self):
+        req = rp.FFTChunkRequest()
+        req.sessionid = self.params.sessionid
+        req.data_type = rp.FFTChunkRequest.DATA_TYPE
+        self.tx_queue.put(req)
+        self.state = States.EXPECTING_CHUNK
+
+    def send_join_reply(self):
+
+        if APPLICATION_MODE == 0:
+            jr = rp.JoinReplyStatusMode()
+            jr.sessionid = self.params.sessionid
+            jr.result = 1
+
+        cfg.Config.store_config_to_radio_packet(self.config, jr)
+        self.tx_queue.put(jr)
+
+
+
+
+
+
 
     def extendTimeout(self, timeout=None):
         if not timeout:
@@ -103,37 +185,6 @@ class NodeWorker:
 
 
 
-    def send_fft_req(self):
-        req = rp.FFTChunkRequest()
-        req.id = self.id
-        req.data_type = rp.FFTChunkRequest.DATA_TYPE
-        self.tx_queue.put(req)
-        self.state = States.EXPECTING_CHUNK
-
-    #TODO: get join configuration from database
-    def send_join_reply(self):
-
-        if APPLICATION_MODE == 0:
-            jr = rp.JoinReplyStatusMode()
-            jr.id = self.id
-            jr.result = 1
-            jr.bw = 0
-            jr.sf = 7
-            jr.cr = 3
-            jr.status_interval = 15000
-            jr.rms_averaging_num = 1
-            jr.temperature_averaging_num = 1
-            jr.fft_N = 1
-            jr.fft_adc_divider = 1
-            jr.fft_adc_samplings = 3
-            jr.fft_peaks_num = 5
-        self.tx_queue.put(jr)
-        self.state = States.JOINED
-
-
-
-
-
 
 #Main stauts worker process
     def worker(self):
@@ -155,24 +206,50 @@ class NodeWorker:
 
             #packet processing routine
             self.extendTimeout()
+
+            #STETE_01: Join request is pending...
             if self.state == States.JOINING:
                 if isinstance(rec, rp.JoinRequest):
-                    assert rec.id == 0x00
-                    self.name = "LORA_WORKER " + str(self.id)
+                    assert rec.sessionid == 0x00
+
+                    #get params
+                    prm.Params.HTTP_get_params_fromDB(self.params, rec.unique_id)
+
+                    self.name = "LORA_WORKER " + str(self.params.sessionid)
                     self.start_time = rec.time
-                    self.send_join_reply()
-                    logging.info("%s: Received JOIN PACKET - node is running - %s\n", self.name, self.start_time)
+
+
+                    #change state
                     self.state = States.JOINED
-                    self.t.start()
+
+                    #self relation sessionid -- address
+                    self.nat[self.params.sessionid] = self.params.address
+
+                    #get config
+                    cfg.Config.HTTP_get_config_fromDB(self.config, self.params.idloranode)
+
+                    #send join reply
+                    self.send_join_reply()
+
+                    logging.info("%s: Received JOIN PACKET:\n"
+                                 "      relation: (%s-%s), fwver: %s, starttime: %s\n"
+                                 "      config loaded, join reply sent",
+                                 self.name, self.params.sessionid, self.params.address, self.params.fwver, self.start_time)
+
                 else:
                     logging.error("%s: Received unexpected packet %s, STATE=JOINING\n", self.name, rec.name())
                     self.state = States.ERROR
 
+            #STETE_02: Node is joined, waiting for another packets...
             elif self.state == States.JOINED:
                 if isinstance(rec, rp.StatusInfo):
-                    assert rec.id == self.id
-                    logging.info("%s: Received STATUS INFO packet: \n temp: %f bat: %d rms: %f peaks: %s",
-                                 self.name, rec.temperature, rec.battery, rec.rms, "".join(str(fft_peak) for fft_peak in rec.fft_peaks_indexes))
+                    assert rec.sessionid == self.params.sessionid
+                    logging.info("%s: Received STATUS INFO packet:\n"
+                                 "      temp: %f bat: %d rms: %f peaks: %s",
+                                 self.name, rec.temperature, rec.battery, rec.rms, rec.get_fft_peaks())
+                    #self.UDP_send_data(rec)
+                    self.HTTP_send_data(rec)
+
                 else:
                     logging.error("%s: Received unexpected packet %s, STATE=JOINED\n", self.name, rec.name())
 
@@ -197,14 +274,5 @@ class NodeWorker:
         self.state = States.ERROR
         logging.info("%s:Main loop stopped.", self.name)
 
-
-
-
-    def processStatusInfo(self, statusInfo):
-        pass
-
-    def request_fft(self):
-        print("FFT callback called...")
-        #self.send_fft_req()
 
 
