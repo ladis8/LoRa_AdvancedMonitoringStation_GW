@@ -96,6 +96,7 @@ class NodeWorker:
         message['idloranode'] = self.get_id()
         message['battery'] = statusinfo_rp.battery
         message['rms'] = statusinfo_rp.rms
+        message['vpp'] = statusinfo_rp.vpp
         message['temperature'] = statusinfo_rp.temperature
         message['fftPeaks'] = json.dumps(statusinfo_rp.get_fft_peaks())
         message['fs'] = self.config.get_fft_params()[0]
@@ -115,6 +116,7 @@ class NodeWorker:
         message['idloranode'] = self.get_id()
         message['battery'] = statusinfo_rp.battery
         message['rms'] = statusinfo_rp.rms
+        message['vpp'] = statusinfo_rp.vpp
         message['temperature'] = statusinfo_rp.temperature
         message['fftPeaks'] = json.dumps(statusinfo_rp.get_fft_peaks())
         message['fs'] = self.config.get_fft_params()[0]
@@ -245,8 +247,8 @@ class NodeWorker:
                 if isinstance(rec, rp.StatusInfo):
                     assert rec.sessionid == self.params.sessionid
                     logging.info("%s: Received STATUS INFO packet:\n"
-                                 "      temp: %f bat: %d rms: %f peaks: %s",
-                                 self.name, rec.temperature, rec.battery, rec.rms, rec.get_fft_peaks())
+                                 "      temp: %f bat: %d rms: %.3f vpp: %.3f peaks (%u): %s",
+                                 self.name, rec.temperature, rec.battery, rec.rms, rec.vpp, rec.fft_peaks_num, rec.get_fft_peaks())
                     #self.UDP_send_data(rec)
                     self.HTTP_send_data(rec)
 

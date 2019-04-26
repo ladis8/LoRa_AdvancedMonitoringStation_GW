@@ -251,17 +251,21 @@ class StatusInfo(RadioPacket):
         return unpack(PAT_FLOAT, self.rawdata[3:7])[0]
 
     @property
-    def temperature(self):
+    def vpp(self):
         return unpack(PAT_FLOAT, self.rawdata[7:11])[0]
 
     @property
+    def temperature(self):
+        return unpack(PAT_FLOAT, self.rawdata[11:15])[0]
+
+    @property
     def fft_peaks_num(self):
-        return self.rawdata[11]
+        return self.rawdata[15]
 
     @property
     def fft_peaks_indexes(self):
         peaks = []
-        lastindex = 12
+        lastindex = 16
         for i in range(self.fft_peaks_num):
             index = unpack(PAT_UINT16, self.rawdata[lastindex+i*2 : lastindex+(i+1)*2])[0]
             peaks.append(index)
@@ -270,7 +274,7 @@ class StatusInfo(RadioPacket):
     @property
     def fft_peaks_values(self):
         peaks = []
-        lastindex = 12 + self.fft_peaks_num * 2
+        lastindex = 16 + self.fft_peaks_num * 2
         for i in range(self.fft_peaks_num):
             value = unpack(PAT_FLOAT, self.rawdata[lastindex+i*4 : lastindex+(i+1)*4])[0]
             peaks.append(value)

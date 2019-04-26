@@ -116,7 +116,7 @@ def on_rx_timeout(channel=None):
     # logging.debug("DIO0 IRQ ON RX TIMEOUT handler - Flags: %s", irq_flags)
     logging.debug("ON RX TIMEOUT handler...")
     # Gateway.module.SX1272_clear_irq_flags(rx_timeout=1)
-    Gateway.module.SX1272_set_mode(lm.MODE.STDBY)
+    #Gateway.module.SX1272_set_mode(lm.MODE.STDBY)
     Gateway.state = States.IDLE
 
 
