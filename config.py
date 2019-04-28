@@ -66,23 +66,35 @@ URL_CONFIG = "http://127.0.0.1:1880/lora_nodered/config"
 
 
 class Config:
+
+    VOLTAGE = 3.3
+    BATTERY_FULL = 254
+
     def __init__(self ):
         #lora settings
-        self.bw = None
-        self.cr = None
-        self.sf = None
-        self.f = None
+        self.lora_bw = None
+        self.lora_cr = None
+        self.lora_sf = None
+        self.lora_f = None
 
         #statusinfo settings
         self.statusinfo_interval = None
-        self.temperature_averaging_num = None
-        self.rms_averaging_num = None
+
+        #dsp settings
+        self.dsp_rms_averaging_num = None
+        self.dsp_kurtosis_trimmed_samples = None
+        self.dsp_threshold_voltage = None
 
         #fft settings
         self.fft_samples_num = None
         self.fft_peaks_num = None
         self.fft_adc_sampling_time = None
         self.fft_adc_divider = None
+        self.adc_resolution = None
+
+        #temperature_settings
+        self.temperature_averaging_num = None
+        self.temperature_calibration_const = None
 
     def __str__(self):
         return ("Config of lora node: {}".format(self.__dict__))
@@ -97,6 +109,7 @@ class Config:
         if not len(out):
             raise Exception("No DB config for loranode with id {}".format(idloranode))
 
+
         for row in out:
             key = row['code'].split(".")[-1]
             if row['datatype'] == "int": value = int(row['value'])
@@ -107,18 +120,20 @@ class Config:
     @staticmethod
     def store_config_to_radio_packet(config, jr):
 
-        jr.bw = Bandwidth[config.bw]
-        jr.sf = SpreadingFactor[config.sf]
-        jr.cr = CodingRate[config.cr]
+        jr.bw = Bandwidth[config.lora_bw]
+        jr.sf = SpreadingFactor[config.lora_sf]
+        jr.cr = CodingRate[config.lora_cr]
 
         if isinstance(jr, rp.JoinReplyStatusMode):
             jr.statusinfo_interval = config.statusinfo_interval
-            jr.rms_averaging_num = config.rms_averaging_num
+            jr.dsp_rms_averaging_num = config.dsp_rms_averaging_num
             jr.temperature_averaging_num = config.temperature_averaging_num
             jr.fft_samples_num = list(FFTSamplesNum.keys()).index(config.fft_samples_num)
             jr.fft_adc_divider = list(ADCDividers.keys()).index(config.fft_adc_divider)
             jr.fft_adc_sampling_time = list(ADCSamplingTimes.keys()).index(config.fft_adc_sampling_time)
             jr.fft_peaks_num = config.fft_peaks_num
+            jr.dsp_threshold_voltage = int(config.dsp_threshold_voltage * config.adc_resolution / Config.VOLTAGE)
+            jr.dsp_kurtosis_trimmed_samples = config.dsp_kurtosis_trimmed_samples
 
         if isinstance(jr, rp.JoinReplyCommandMode):
             raise NotImplementedError()

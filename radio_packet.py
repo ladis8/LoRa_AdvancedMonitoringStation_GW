@@ -183,11 +183,11 @@ class JoinReplyStatusMode(JoinReply):
         self.rawdata[9:11] = pack(PAT_UINT16, value)
 
     @property
-    def rms_averaging_num(self):
+    def dsp_rms_averaging_num(self):
         return self.rawdata[11]
 
-    @rms_averaging_num.setter
-    def rms_averaging_num(self, value):
+    @dsp_rms_averaging_num.setter
+    def dsp_rms_averaging_num(self, value):
         assert value <= 10
         self.rawdata[11] = value
 
@@ -233,6 +233,24 @@ class JoinReplyStatusMode(JoinReply):
         assert value <= 10
         self.rawdata[16] = value
 
+    @property
+    def dsp_kurtosis_trimmed_samples(self):
+        return self.rawdata[17]
+
+    @dsp_kurtosis_trimmed_samples.setter
+    def dsp_kurtosis_trimmed_samples(self, value):
+        assert value < 50
+        self.rawdata[17] = value
+
+    @property
+    def dsp_threshold_voltage(self):
+        return unpack(PAT_UINT16, self.rawdata[18:20])[0]
+
+    @dsp_threshold_voltage.setter
+    def dsp_threshold_voltage(self, value):
+        self.rawdata[18:20] = pack(PAT_UINT16, value)
+
+
 
 class StatusInfo(RadioPacket):
     CMD = 0x20  # StatusInfo.CMD
@@ -247,25 +265,41 @@ class StatusInfo(RadioPacket):
         return self.rawdata[2]
 
     @property
+    def temperature(self):
+        return unpack(PAT_UINT16, self.rawdata[3:5])[0]
+
+    @property
     def rms(self):
-        return unpack(PAT_FLOAT, self.rawdata[3:7])[0]
+        return unpack(PAT_UINT16, self.rawdata[5:7])[0]
 
     @property
     def vpp(self):
-        return unpack(PAT_FLOAT, self.rawdata[7:11])[0]
+        return unpack(PAT_UINT16, self.rawdata[7:9])[0]
 
     @property
-    def temperature(self):
-        return unpack(PAT_FLOAT, self.rawdata[11:15])[0]
+    def kurtosis_ratio(self):
+        return unpack(PAT_FLOAT, self.rawdata[9:13])[0]
+
+    @property
+    def ringdown_counts(self):
+        return self.rawdata[13]
+
+    @property
+    def rise_time(self):
+        return unpack(PAT_UINT16, self.rawdata[14:16])[0]
+
+    @property
+    def threshold_duration(self):
+        return unpack(PAT_UINT16, self.rawdata[16:18])[0]
 
     @property
     def fft_peaks_num(self):
-        return self.rawdata[15]
+        return self.rawdata[18]
 
     @property
     def fft_peaks_indexes(self):
         peaks = []
-        lastindex = 16
+        lastindex = 19
         for i in range(self.fft_peaks_num):
             index = unpack(PAT_UINT16, self.rawdata[lastindex+i*2 : lastindex+(i+1)*2])[0]
             peaks.append(index)
@@ -274,7 +308,7 @@ class StatusInfo(RadioPacket):
     @property
     def fft_peaks_values(self):
         peaks = []
-        lastindex = 16 + self.fft_peaks_num * 2
+        lastindex = 19 + self.fft_peaks_num * 2
         for i in range(self.fft_peaks_num):
             value = unpack(PAT_FLOAT, self.rawdata[lastindex+i*4 : lastindex+(i+1)*4])[0]
             peaks.append(value)
