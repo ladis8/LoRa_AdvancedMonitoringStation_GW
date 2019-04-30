@@ -94,7 +94,7 @@ def on_rx_done(channel=None):
         rp.rsii = packet_RSII
         if rp.sessionid == 0x00:
             node_worker = lnw.NodeWorker(Gateway.tx_queue, Gateway.nat)
-            node_worker.rx_queue.put(rp)
+            node_worker.rx_common_queue.put(rp)
             node_worker.start()
 
             Gateway.nodes[rp.unique_id] = node_worker
@@ -102,10 +102,10 @@ def on_rx_done(channel=None):
         elif rp.sessionid not in Gateway.nat:
             logging.error("Packed filterd, received packet with unknown seassion id %s", rp.sessionid)
         else:
-            logging.info("Received packet with seassion id %s", rp.sessionid)
+            logging.debug("Received packet with seassion id 0x%02x", rp.sessionid)
             address = Gateway.nat[rp.sessionid]
             node = Gateway.nodes[address]
-            node.rx_queue.put(rp)
+            node.rx_common_queue.put(rp)
 
         m.SX1272_set_mode(lm.MODE.SLEEP)
         Gateway.state = States.IDLE

@@ -245,7 +245,8 @@ class SX1272_Module:
 
         #set mode for TX
         self.SX1272_set_mode(MODE.TX)
-        logging.debug("Transmit packet prepared for sending...")
+        logging.debug("Radio packet %s with %u length prepared for sending...",
+                      radio_packet.getName(), len(radio_packet.rawdata))
 
     def send_packet_deprecated(self, payload):
 

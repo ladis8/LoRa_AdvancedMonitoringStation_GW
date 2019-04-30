@@ -6,6 +6,8 @@ URL_PARAMS = "http://127.0.0.1:1880/lora_nodered/node_params"
 
 class Params:
 
+    CFG_DEFAULT_PORT = 8888
+
     def __init__(self):
         #loranode_params
         self.idloranode = None
@@ -14,6 +16,15 @@ class Params:
         self.code = None
         self.name = None
         self.fwver = None
+        self.port = Params.CFG_DEFAULT_PORT
+
+    def set_from_json_packet(self, jp):
+        for key in jp.__dict__.keys():
+            if key in self.__dict__:
+                self.__dict__[key] = jp.__dict__[key]
+
+        self.sessionid = int(self.sessionid, 16)
+
 
 
     def __str__(self):
@@ -25,6 +36,20 @@ class Params:
 
         http_params = {'address': address}
         req = requests.get(url=URL_PARAMS, params=http_params)
+        out = req.json()
+
+        if not len(out):
+            raise Exception("No DB item for loranode with address {}".format(address))
+
+        for row in out:
+            assert len(out) == 1
+            for key in row:
+                params.__dict__[key] = row[key]
+        params.sessionid = int(params.sessionid, 16)
+
+    @staticmethod
+    def UDP_get_params_fromDB(socket, params, address):
+
         out = req.json()
 
         if not len(out):
