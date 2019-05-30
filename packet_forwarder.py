@@ -1,5 +1,6 @@
 import logging
 import time
+import sys
 from queue import Queue
 from enum import Enum
 
@@ -18,27 +19,23 @@ import lora_node_worker as lnw
 
 config = {}
 config["freq"] = 868.5
+#config["freq"] = 433.175
 config["spreading_factor"] = 12
-config["coding_rate"] = lm.CODING_RATE.CR4_5.value
-config["bandwidth"] = lm.BW.BW7_8.value
+config["coding_rate"] = lm.CODING_RATE.CR4_6.value
+config["bandwidth"] = lm.SX1276_BW.BW125.value
+#config["bandwidth"] = lm.SX1272_BW.BW125.value
 config["implicit_header_mode"] = 0
 config["rx_crc"] = 1
 config["tx_cont_mode"] = 0
-# config["symbol_timeout"] = 0x08    #not needed when RX continuous mode
+config["symbol_timeout"] = 0x08    #not needed when RX continuous mode
 config["max_payload_len"] = 0xFF
-config["payload_len"] = 0x40  # not needed when implicit header mode 0
+config["payload_len"] = 0x0B  # not needed when implicit header mode 0
 config["hop_period"] = 0x00
 config["sync_word"] = 0x34
 config["lr_optimize"] = 1
-
-# location
-lat = 0
-lon = 0
-alt = 0
-
-# server
-server_ip = "0.0.0.0"
-server_port = 0
+config["agc_auto_on"] = 0
+config["pa_select"] = 1 #pa_boost
+config["pa_output_power"] = 0x0F #Pout = 17 dB/m
 
 
 class States(Enum):
@@ -49,6 +46,7 @@ class States(Enum):
 
 
 class Gateway():
+    board = None
     module = None
     state = States.IDLE
     tx_queue = Queue()
@@ -61,7 +59,7 @@ def on_tx_done(channel):
     irq_flags = Gateway.module.SX1272_get_irq_flags()
     #logging.debug("DIO0 IRQ ON TX DONE handler - Flags: %s", irq_flags)
     Gateway.module.SX1272_clear_irq_flags(tx_done=1)
-    Gateway.module.SX1272_set_mode(lm.MODE.SLEEP)
+    #Gateway.module.SX1272_set_mode(lm.MODE.SLEEP)
     Gateway.state = States.IDLE
 
 
@@ -69,7 +67,7 @@ def on_rx_done(channel=None):
     m = Gateway.module
     logging.info("On RX Done")
     irq_flags = m.SX1272_get_irq_flags()
-    #logging.debug("DIO0 IRQ ON RX DONE handler - Flags: %s", irq_flags)
+    logging.debug("DIO0 IRQ ON RX DONE handler - Flags: %s", irq_flags)
 
     # TODO: assert for lora module state
     if m.mode == lm.MODE.RXCONT:
@@ -81,9 +79,9 @@ def on_rx_done(channel=None):
 
         m.received_packets += 1
         payload = m.read_rx_payload()
-        packet_SNR = m.get_packet_snr_value()
-        packet_RSII = m.get_packet_rssi_value()
-        RSII = m.SX1272_get_rsii_value()
+        packet_SNR = m.SX127X_get_packet_snr_value()
+        packet_RSII = m.SX127X_get_packet_rssi_value()
+        RSII = m.SX127X_get_rssi_value()
         logging.debug("Packet CRC OK: SNR= %s, packet RSII= %s, RSII= %s, length = %d, message = %s",
                      packet_SNR, packet_RSII, RSII, len(payload), "".join("\\x{:02x}".format(x) for x in payload))
         # logging.info("Packet CRC OK: SNR= %s, packet RSII= %s, RSII= %s, length = %d, message = %s",
@@ -107,28 +105,30 @@ def on_rx_done(channel=None):
             node = Gateway.nodes[address]
             node.rx_common_queue.put(rp)
 
-        m.SX1272_set_mode(lm.MODE.SLEEP)
+        #m.SX1272_set_mode(lm.MODE.SLEEP)
         Gateway.state = States.IDLE
 
 
 def on_rx_timeout(channel=None):
-    # irq_flags = Gateway.module.SX1272_get_irq_flags()
-    # logging.debug("DIO0 IRQ ON RX TIMEOUT handler - Flags: %s", irq_flags)
-    logging.debug("ON RX TIMEOUT handler...")
+    irq_flags = Gateway.module.SX1272_get_irq_flags()
+    status = Gateway.module.SX1272_get_modem_status()
+    #logging.debug("DIO0 IRQ ON RX TIMEOUT handler - Flags: %s", irq_flags)
+    #logging.debug("ON RX TIMEOUT handler...")
     # Gateway.module.SX1272_clear_irq_flags(rx_timeout=1)
     #Gateway.module.SX1272_set_mode(lm.MODE.STDBY)
     Gateway.state = States.IDLE
 
 
 
-def setup():
+def setup(type):
     # setup board
     board = rb.RPI_BOARD()
+    Gateway.board = board
 
     # setup config of lora module
-    module = lm.SX1272_Module(board)
-    module.SX1272_is_alive()
-    module.SX1272_module_setup(config)
+    module = lm.SX127X_Module(board, type)
+    #module.SX1272_is_alive()
+    module.SX127X_module_setup(config)
     Gateway.module = module
 
 
@@ -137,20 +137,32 @@ def loop():
     timeout = None
 
     while True:
-        #TODO: check channel detection
-        if (Gateway.state == States.IDLE or Gateway.state == States.RX_RUNNING) and not Gateway.tx_queue.empty():
-            Gateway.module.set_tx(on_tx_done, Gateway.tx_queue.get())
-            Gateway.state = States.TX_RUNNING
+        try:
+            #TODO: check channel detection
+            if (Gateway.state == States.IDLE or Gateway.state == States.RX_RUNNING) and not Gateway.tx_queue.empty():
+                Gateway.module.set_tx(on_tx_done, Gateway.tx_queue.get())
+                Gateway.state = States.TX_RUNNING
 
-        elif Gateway.state == States.IDLE:
-            Gateway.module.set_rx_continuous(on_rx_done)
-            Gateway.state = States.RX_RUNNING
-            timeout = time.time() + Gateway.RX_TIMEOUT
+            elif Gateway.state == States.IDLE:
+                Gateway.module.set_rx_continuous(on_rx_done)
+                Gateway.state = States.RX_RUNNING
+                timeout = time.time() + Gateway.RX_TIMEOUT
 
-        elif Gateway.state == States.RX_RUNNING and time.time() > timeout:
-            on_rx_timeout()
+            elif Gateway.state == States.RX_RUNNING and time.time() > timeout:
+                on_rx_timeout()
 
-        time.sleep(0.1)
+            time.sleep(0.1)
+
+        except KeyboardInterrupt:
+            print("Cleaning...")
+            Gateway.board.clean()
+            break
+        except AssertionError:
+            print("Cleaning...")
+            Gateway.board.clean()
+            break
+
+
 
 
 
@@ -183,5 +195,8 @@ def loop():
 
 if __name__ == "__main__":
     logging.getLogger().setLevel(logging.DEBUG)
-    setup()
-    loop()
+    if sys.argv[1] == "SX1272" or sys.argv[1] == "SX1276":
+        setup(sys.argv[1])
+        loop()
+    else:
+        print("Wrong module name")

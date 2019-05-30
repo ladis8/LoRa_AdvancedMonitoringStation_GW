@@ -9,7 +9,10 @@ import datetime
 from rpi_board import *
 from tools import *
 
-RSSI_COOR = 139
+
+
+RSSI_COOR_SX1272 = 139
+RSSI_COOR_SX1276 = 157 #HF
 
 class REG_LORA:
     FIFO = 0x00
@@ -76,7 +79,7 @@ class MODE (Enum):
     RXSINGLE = 0x86
     CAD      = 0x87
 
-class BW (Enum):
+class SX1276_BW (Enum):
     BW7_8   = 0
     BW10_4  = 1
     BW15_6  = 2
@@ -88,6 +91,10 @@ class BW (Enum):
     BW250   = 8
     BW500   = 9
 
+class SX1272_BW (Enum):
+    BW125   = 0
+    BW250   = 1
+    BW500   = 2
 
 class CODING_RATE (Enum):
     CR_ERROR = 0
@@ -96,11 +103,17 @@ class CODING_RATE (Enum):
     CR4_7 = 3
     CR4_8 = 4
 
+class LNA_GAIN (Enum): #LOW NOISE AMPLIFIER
+    G1 = 0b001
+    G2 = 0b010
+    G3 = 0b011
+    G4 = 0b100
+    G5 = 0b101
+    G6 = 0b110
 
-#LOW NOISE AMPLIFIER
-LNA_MAX_GAIN =               0x23
-LNA_OFF_GAIN =               0x00
-LNA_LOW_GAIN =		    	0x20
+LNA_MAX_GAIN = 0x23 #max gain and boost on
+LNA_LOW_GAIN = 0x20 #max gain and boost off
+LNA_OFF_GAIN = 0x00
 
 
 
@@ -115,7 +128,7 @@ def getter(register_address):
     """
     def decorator(func):
         def wrapper(self):
-            return func(self, self.rpi_board.SPI_read_register(register_address))
+            return func(self, self.rpi_board.SPI_read_register(register_address)[1])
         return wrapper
     return decorator
 
@@ -133,53 +146,75 @@ def setter(register_address):
         return wrapper
     return decorator
 
-class SX1272_Module:
+class SX127X_Module:
 
-    def __init__(self, rpi_board):
+    def __init__(self, rpi_board, modemType="SX1272"):
         self.rpi_board = rpi_board
         self.mode = None
         self.received_packets = 0
         self.received_packets_ok = 0
 
-    def SX1272_is_alive(self):
+        self.type = modemType
+        self.RSSI_COOR = 0
+
+
+    def SX127X_is_alive(self):
 
         #check version
-        version = self.get_version()
-        assert version == 0x22
-        logging.debug("SX1272 detected...")
+        version = self.SX127X_get_version()
+        print("Version ", version)
+        if self.type == "sx1272":
+            assert version == 0x22
+            logging.debug("SX1272 detected...")
 
-    def SX1272_module_setup(self, config):
+        elif self.type == "SX1276":
+            assert version == 0x12
+            logging.debug("SX1276 detected...")
+
+    def SX127X_module_setup(self, config):
 
         #reset lora module
-        self.rpi_board.pin_reset(self.rpi_board.RST)
+        if self.type == "SX1272":
+            self.rpi_board.pin_reset(self.rpi_board.RST)
+        elif self.type == "SX1276":
+            self.rpi_board.pin_reset_inverse(self.rpi_board.RST)
 
         #set sleepmode
         self.SX1272_set_mode(MODE.SLEEP)
 
 
         #set frequency
-        self.SX1272_set_frequency(config["freq"])
-        freq_a = self.SX1272_get_frequency()
+        self.SX127X_set_frequency(config["freq"])
+        freq_a = self.SX127X_get_frequency()
         logging.debug("Frequency set up: %d MHz", freq_a)
 
         #set config
-        self.SX1272_set_modem_config1(config["bandwidth"], config["coding_rate"], config["implicit_header_mode"], config["rx_crc"], config["lr_optimize"])
-        self.SX1272_set_modem_config2(spreading_factor=config["spreading_factor"], tx_cont_mode=config["tx_cont_mode"])
+        if self.type == "SX1272":
+            self.SX1272_set_modem_config1(config["bandwidth"], config["coding_rate"], config["implicit_header_mode"], config["rx_crc"], config["lr_optimize"])
+            self.SX1272_set_modem_config2(spreading_factor=config["spreading_factor"], tx_cont_mode=config["tx_cont_mode"], agc_auto_on=config['agc_auto_on'])
+            self.RSSI_COOR = RSSI_COOR_SX1272
+        elif self.type == "SX1276":
+            self.SX1276_set_modem_config1(bandwidth=config["bandwidth"], coding_rate=config["coding_rate"], implicit_header_mode=config["implicit_header_mode"])
+            self.SX1276_set_modem_config2(spreading_factor=config["spreading_factor"], tx_cont_mode=config["tx_cont_mode"], rx_crc=config["rx_crc"])
+            self.SX1276_set_modem_config3(lr_optimize=config["lr_optimize"], agc_auto=config['agc_auto_on'])
+            self.RSSI_COOR = RSSI_COOR_SX1276
 
         #set timout
-        #self.SX1272_set_symb_timeout(config["symbol_timeout"])
+        self.SX1272_set_symb_timeout(config["symbol_timeout"])
 
         #set sync word
-        self.SX1272_set_syncword(config["sync_word"])
-        self.SX1272_set_max_payload_length(config["max_payload_len"])
-        self.SX1272_set_payload_length(config["payload_len"])
+        self.SX127X_set_syncword(config["sync_word"])
+        self.SX127X_set_max_payload_length(config["max_payload_len"])
+        self.SX127X_set_payload_length(config["payload_len"])
         self.SX1272_set_hop_period(config["hop_period"])
 
         #set pointer addr
         self.rpi_board.SPI_write_register(REG_LORA.FIFO_ADDR_PTR, self.rpi_board.SPI_read_register(REG_LORA.FIFO_RX_BASE_ADDR)[1])
 
-        #set amplifier gain
-        self.rpi_board.SPI_write_register(REG_LORA.LNA, LNA_MAX_GAIN)  #max lna gain
+        #set power amplifier and receive amplifier gain
+        self.SX127X_set_pa_config(config["pa_select"], config["pa_output_power"])
+        if not config['agc_auto_on']:
+            self.rpi_board.SPI_write_register(REG_LORA.LNA, LNA_MAX_GAIN)  #max lna gain
 
         print(self)
 
@@ -194,10 +229,10 @@ class SX1272_Module:
     #In RX_CONTINUOUS mode RX Timout flag is never rised
     def set_rx_continuous(self, rx_done_handler):
 
-        if self.mode == MODE.RXCONT:
-            return
-
-        assert self.mode == MODE.STDBY or self.mode == MODE.SLEEP
+        # if self.mode == MODE.RXCONT:
+        #     return
+        #
+        # assert self.mode == MODE.STDBY or self.mode == MODE.SLEEP
         print("\nSetting rx...")
         self.SX1272_set_dio1_mapping(dio0=0, dio3=3)
         self.rpi_board.add_irq_handlers(dio0_irq_handler=rx_done_handler)
@@ -205,6 +240,7 @@ class SX1272_Module:
 
         #set mode
         self.SX1272_set_mode(MODE.RXCONT)
+        #self.SX1272_set_mode(MODE.RXSINGLE)
 
         #timestamp = datetime.datetime.now().replace(microsecond=0)
         #time_start = time.time()
@@ -291,22 +327,24 @@ class SX1272_Module:
 
 
 
-
-    def SX1272_set_frequency(self, freq):
+    #region Frequency
+    def SX127X_set_frequency(self, freq):
         assert self.mode == MODE.SLEEP or self.mode == MODE.STDBY or self.mode == MODE.FSK_STDBY
         freq = int(freq * 16384.)
         self.rpi_board.SPI_write_register(REG_LORA.FR_MSB, to_uint8t(freq >> 16))
         self.rpi_board.SPI_write_register(REG_LORA.FR_MID, to_uint8t(freq >> 8))
         self.rpi_board.SPI_write_register(REG_LORA.FR_LSB, to_uint8t(freq))
 
-    def SX1272_get_frequency(self):
+    def SX127X_get_frequency(self):
         msb = self.rpi_board.SPI_read_register(REG_LORA.FR_MSB)[1]
         mid = self.rpi_board.SPI_read_register(REG_LORA.FR_MID)[1]
         lsb = self.rpi_board.SPI_read_register(REG_LORA.FR_LSB)[1]
         f = lsb + 256 * (mid + 256 * msb)
         return f / 16384
+    #endregion
 
 
+    #region Config
     def SX1272_get_modem_config1(self):
         val = self.rpi_board.SPI_read_register(REG_LORA.MODEM_CONFIG_1)[1]
         d = dict(
@@ -316,34 +354,109 @@ class SX1272_Module:
             rx_crc=val >> 1 & 0x01,
             lr_optimize=val & 0x01,
         )
-        #print("modem config1 is ", val, d)
+        return d
+
+    def SX1276_get_modem_config1(self):
+        val = self.rpi_board.SPI_read_register(REG_LORA.MODEM_CONFIG_1)[1]
+        d = dict(
+            bandwidth=val >> 4 & 0x0F,
+            coding_rate=val >> 1 & 0x07,
+            implicit_header_mode=val & 0x01,
+        )
+
+        print("modem config1 is: ", val, d)
         return d
 
     def SX1272_set_modem_config1(self, bandwidth=None, coding_rate=None, implicit_header_mode=None, rx_crc=None, lr_optimize=None):
         var = locals()
         current = self.SX1272_get_modem_config1()
         new = {s: current[s] if var[s] is None else var[s] for s in var}
-        val = new['lr_optimize'] | (new['rx_crc'] << 1) | (new['implicit_header_mode'] << 2) | (new['coding_rate'] << 3) | (new['bandwidth'] << 6)
+
+        val = new['lr_optimize'] | \
+              (new['rx_crc'] << 1) | \
+              (new['implicit_header_mode'] << 2) | \
+              (new['coding_rate'] << 3) | \
+              (new['bandwidth'] << 6)
+        self.rpi_board.SPI_write_register(REG_LORA.MODEM_CONFIG_1, val)
+
+    def SX1276_set_modem_config1(self, bandwidth=None, coding_rate=None, implicit_header_mode=None):
+        var = locals()
+        current = self.SX1276_get_modem_config1()
+        new = {s: current[s] if var[s] is None else var[s] for s in var}
+
+        val = new['implicit_header_mode'] | (new['coding_rate'] << 1) | (new['bandwidth'] << 4)
         self.rpi_board.SPI_write_register(REG_LORA.MODEM_CONFIG_1, val)
 
     def SX1272_get_modem_config2(self, include_symb_timout_lsb=False):
         val = self.rpi_board.SPI_read_register(REG_LORA.MODEM_CONFIG_2)[1]
         d = dict(
-            spreading_factor= val >> 4 & 0x0F,
+            spreading_factor=val >> 4 & 0x0F,
             tx_cont_mode=val >> 3 & 0x01,
+            agc_auto_on =val & 0x01
         )
         if include_symb_timout_lsb:
             d['symb_timout_lsb'] = val & 0x03
         #print("modem config2 is: ", val, d)
         return d
 
-    def SX1272_set_modem_config2(self, spreading_factor=None, tx_cont_mode=None):
+    def SX1276_get_modem_config2(self, include_symb_timout_lsb=False):
+        val = self.rpi_board.SPI_read_register(REG_LORA.MODEM_CONFIG_2)[1]
+        d = dict(
+            spreading_factor=val >> 4 & 0x0F,
+            tx_cont_mode=val >> 3 & 0x01,
+            rx_crc=val >> 2 & 0x01,
+        )
+        if include_symb_timout_lsb:
+            d['symb_timout_lsb'] = val & 0x03
+        print("modem config2 is: ", val, d)
+        return d
+
+    def SX1272_set_modem_config2(self, spreading_factor=None, tx_cont_mode=None, agc_auto_on=None):
         var = locals()
         # RegModemConfig2 contains the SymbTimout MSB bits. We tack the back on when writing this register.
         current = self.SX1272_get_modem_config2(include_symb_timout_lsb=True)
         new = {s: current[s] if var[s] is None else var[s] for s in var}
-        val = (new['spreading_factor'] << 4) | (new['tx_cont_mode'] << 3) | current['symb_timout_lsb']
+
+        val = (new['spreading_factor'] << 4) | \
+              (new['tx_cont_mode'] << 3) | \
+              (new['agc_auto_on'] << 2) | \
+              current['symb_timout_lsb']
         self.rpi_board.SPI_write_register(REG_LORA.MODEM_CONFIG_2, val)
+
+
+    def SX1276_set_modem_config2(self, spreading_factor=None, tx_cont_mode=None, rx_crc=None):
+        var = locals()
+        # RegModemConfig2 contains the SymbTimout MSB bits. We tack the back on when writing this register.
+        current = self.SX1276_get_modem_config2(include_symb_timout_lsb=True)
+        new = {s: current[s] if var[s] is None else var[s] for s in var}
+
+        val = (new['spreading_factor'] << 4) | \
+              (new['tx_cont_mode'] << 3) | \
+              (new['rx_crc'] << 2) | \
+              current['symb_timout_lsb']
+        self.rpi_board.SPI_write_register(REG_LORA.MODEM_CONFIG_2, val)
+
+    def SX1276_get_modem_config3(self):
+        val = self.rpi_board.SPI_read_register(REG_LORA.MODEM_CONFIG_3)[1]
+        d = dict(
+            lr_optimize=val >> 3 & 0x01,
+            agc_auto_on=val >> 2 & 0x01,
+        )
+        return d
+
+    def SX1276_set_modem_config3(self, lr_optimize=None, agc_auto=None):
+        var = locals()
+        current = self.SX1276_get_modem_config3()
+        new = {s: current[s] if var[s] is None else var[s] for s in var}
+
+        val = (new['lr_optimize'] << 3) | \
+              (new['agc_auto'] << 2)
+        self.rpi_board.SPI_write_register(REG_LORA.MODEM_CONFIG_3, val)
+
+    #endregion
+
+
+
 
     def SX1272_get_dio1_mapping(self):
         val = self.rpi_board.SPI_read_register(REG_LORA.DIO_MAPPING_1)[1]
@@ -427,49 +540,81 @@ class SX1272_Module:
             signal_detected=status >> 0 & 0x01
         )
 
-    def get_packet_snr_value(self):
-        value = self.rpi_board.SPI_read_register(REG_LORA.PKT_SNR_VALUE)[1]
-        return -float(~value + 1)/4. if value & 0x80 else float(value)/4.
+    #region Power Amplifier
+    @getter(REG_LORA.PA_CONFIG)
+    def SX127X_get_pa_config(self, val):
+        return dict(
+            pa_select=val >> 7 & 0x01,
+            pa_max_power=val >> 4 & 0x03,
+            pa_output_power=val & 0x0F
+        )
 
-    def get_packet_rssi_value(self):
-        value = self.rpi_board.SPI_read_register(REG_LORA.PKT_RSSI_VALUE)[1]
-        return value - RSSI_COOR
+    def SX127X_set_pa_config(self, pa_select=None, pa_max_power=None, pa_output_power=None):
+        #param pa_select: Selects PA output pin, 0->RFO, 1->PA_BOOST
+        #:param max_power: Select max output power Pmax = 10.8 + 0.6 * MaxPower
+        #:param output_power: Output power Pout = Pmax - (15 - OutputPower) if PaSelect = 0,
+        # Pout = 17 - (15 - OutputPower) if PaSelect = 1(PA_BOOST pin)
+        var = locals()
+        current = self.SX127X_get_pa_config()
+        new = {s: current[s] if var[s] is None else var[s] for s in var}
 
-    @getter(REG_LORA.VERSION)
-    def get_version(self, val):
-        return val[1]
+        val = (new['pa_select'] << 7) | (new['pa_max_power'] << 4) | new['pa_output_power']
+        self.rpi_board.SPI_write_register(REG_LORA.PA_CONFIG, val)
+    #endregion
 
+
+
+
+    #region SNR, RSSI
     @getter(REG_LORA.RSSI_VALUE)
-    def SX1272_get_rsii_value(self, val):
-        return val[1] - RSSI_COOR
+    def SX127X_get_rssi_value(self, val):
+        return val - self.RSSI_COOR
 
-    @setter(REG_LORA.SYNC_WORD)
-    def SX1272_set_syncword(self, sync_word):
-        return sync_word
+    @getter(REG_LORA.PKT_RSSI_VALUE)
+    def SX127X_get_packet_rssi_value(self, val):
+        return val - self.RSSI_COOR
 
-    @getter(REG_LORA.SYNC_WORD)
-    def SX1272_get_syncword(self, val):
-        return val[1]
+    @getter(REG_LORA.PKT_SNR_VALUE)
+    def SX127X_get_packet_snr_value(self, val):
+        return -float(~val + 1)/4. if val & 0x80 else float(val)/4.
+    #endregion
 
+
+    #region Payloads
     @getter(REG_LORA.PAYLOAD_LENGTH)
-    def SX1272_get_payload_length(self, val):
-        return val[1]
+    def SX127X_get_payload_length(self, val):
+        return val
 
     @setter(REG_LORA.PAYLOAD_LENGTH)
-    def SX1272_set_payload_length(self, payload_length):
+    def SX127X_set_payload_length(self, payload_length):
         return payload_length
 
     @getter(REG_LORA.MAX_PAYLOAD_LENGTH)
-    def SX1272_get_max_payload_length(self, val):
-        return val[1]
+    def SX127X_get_max_payload_length(self, val):
+        return val
 
     @setter(REG_LORA.MAX_PAYLOAD_LENGTH)
-    def SX1272_set_max_payload_length(self, max_payload_length):
+    def SX127X_set_max_payload_length(self, max_payload_length):
         return max_payload_length
+    #endregion
+
+
+
+    @getter(REG_LORA.VERSION)
+    def SX127X_get_version(self, val):
+        return val
+
+    @setter(REG_LORA.SYNC_WORD)
+    def SX127X_set_syncword(self, sync_word):
+        return sync_word
+
+    @getter(REG_LORA.SYNC_WORD)
+    def SX127X_get_syncword(self, val):
+        return val
 
     @getter(REG_LORA.HOP_PERIOD)
     def SX1272_get_hop_period(self, val):
-        return val[1]
+        return val
 
     @setter(REG_LORA.HOP_PERIOD)
     def SX1272_set_hop_period(self, hop_period):
@@ -477,54 +622,64 @@ class SX1272_Module:
 
 
 
+
+
     def __str__(self):
         # don't use __str__ while in any mode other that SLEEP or STDBY
         assert (self.mode == MODE.SLEEP or self.mode == MODE.STDBY)
 
-        onoff = lambda i: 'ON' if i else 'OFF'
-        f = self.SX1272_get_frequency()
-        cfg1 = self.SX1272_get_modem_config1()
-        cfg2 = self.SX1272_get_modem_config2()
-        #pa_config = self.get_pa_config(convert_dBm=True)
+        onoff = lambda x: 'ON' if x else 'OFF'
+
+        f = self.SX127X_get_frequency()
+        cfg1 = self.SX1272_get_modem_config1() if self.type == "SX1272" else self.SX1276_get_modem_config1()
+        cfg2 = self.SX1272_get_modem_config2() if self.type == "SX1272" else self.SX1276_get_modem_config2()
+        if self.type == "SX1276":
+            cfg3 = self.SX1276_get_modem_config3()
+        pa_config = self.SX127X_get_pa_config()
+
         #ocp = self.get_ocp(convert_mA=True)
         #lna = self.get_lna()
+
+        bw = SX1276_BW(cfg1['bandwidth']).name if self.type == "SX1276" else SX1272_BW(cfg1['bandwidth']).name
+        crc = cfg2['rx_crc'] if self.type == "SX1276" else cfg1['rx_crc']
+        lr_optimize = cfg1['lr_optimize'] if self.type == "SX1272" else cfg3['lr_optimize']
+        agc_auto_on = cfg2['agc_auto_on'] if self.type == "SX1272" else cfg3['agc_auto_on']
+
         s = "SX127x LoRa registers:\n"
         s += " mode               %s\n" % MODE(self.SX1272_get_mode()).name
-
         s += " freq               %f MHz\n" % f
         s += " coding_rate        %s\n" % CODING_RATE(cfg1['coding_rate']).name
-        s += " bw                 %s\n" % BW(cfg1['bandwidth']).name
+        s += " bw                 %s\n" % bw
         s += " spreading_factor   %s chips/symb\n" % (1 << cfg2['spreading_factor'])
         s += " implicit_hdr_mode  %s\n" % onoff(cfg1['implicit_header_mode'])
-        s += " rx_payload_crc     %s\n" % onoff(cfg1['rx_crc'])
+        s += " rx_payload_crc     %s\n" % onoff(crc)
         s += " tx_cont_mode       %s\n" % onoff(cfg2['tx_cont_mode'])
+        s += " low dr optimize    %s\n" % onoff(lr_optimize)
+        s += " agc_auto_on        %s\n" % onoff(agc_auto_on)
         #s += " preamble           %d\n" % self.get_preamble()
-        #s += " low_data_rate_opti %s\n" % onoff(cfg3['low_data_rate_optim'])
-        #s += " agc_auto_on        %s\n" % onoff(cfg3['agc_auto_on'])
         s += " symb_timeout       %s\n" % self.SX1272_get_symb_timeout()
         s += " freq_hop_period    %s\n" % self.SX1272_get_hop_period()
         #s += " hop_channel        %s\n" % self.get_hop_channel()
-        s += " payload_length     %s\n" % self.SX1272_get_payload_length()
-        s += " max_payload_length %s\n" % self.SX1272_get_max_payload_length()
+        s += " payload_length     %s\n" % self.SX127X_get_payload_length()
+        s += " max_payload_length %s\n" % self.SX127X_get_max_payload_length()
         s += " irq_flags          %s\n" % self.SX1272_get_irq_flags()
         #s += " rx_nb_byte         %d\n" % self.get_rx_nb_bytes()
         #s += " rx_header_cnt      %d\n" % self.get_rx_header_cnt()
         #s += " rx_packet_cnt      %d\n" % self.get_rx_packet_cnt()
-        #s += " pkt_snr_value      %f\n" % self.get_pkt_snr_value()
-        #s += " pkt_rssi_value     %d\n" % self.get_pkt_rssi_value()
-        #s += " rssi_value         %d\n" % self.get_rssi_value()
+        s += " pkt_snr_value      %f\n" % self.SX127X_get_packet_snr_value()
+        s += " pkt_rssi_value     %d\n" % self.SX127X_get_packet_rssi_value()
+        s += " rssi_value         %d\n" % self.SX127X_get_rssi_value()
         #s += " fei                %d\n" % self.get_fei()
-        #s += " pa_select          %s\n" % PA_SELECT.lookup[pa_config['pa_select']]
-        #s += " max_power          %f dBm\n" % pa_config['max_power']
-        #s += " output_power       %f dBm\n" % pa_config['output_power']
+        s += " pa_select          %s\n" % ("PA_BOOST" if pa_config['pa_select'] else "RFO")
+        s += " max_power          %f dBm\n" % pa_config['pa_max_power']
+        s += " output_power       %f dBm\n" % pa_config['pa_output_power']
         #s += " ocp                %s\n" % onoff(ocp['ocp_on'])
         #s += " ocp_trim           %f mA\n" % ocp['ocp_trim']
         #s += " lna_gain           %s\n" % GAIN.lookup[lna['lna_gain']]
         #s += " lna_boost_lf       %s\n" % bin(lna['lna_boost_lf'])
         #s += " lna_boost_hf       %s\n" % bin(lna['lna_boost_hf'])
-        #s += " detect_optimize    %#02x\n" % self.get_detect_optimize()
         #s += " detection_thresh   %#02x\n" % self.get_detection_threshold()
-        s += " sync_word          %#02x\n" % self.SX1272_get_syncword()
+        s += " sync_word          %#02x\n" % self.SX127X_get_syncword()
         #s += " dio_mapping 0..5   %s\n" % self.get_dio_mapping()
         #s += " tcxo               %s\n" % ['XTAL', 'TCXO'][self.get_tcxo()]
         #s += " pa_dac             %s\n" % ['default', 'PA_BOOST'][self.get_pa_dac()]
@@ -534,7 +689,7 @@ class SX1272_Module:
         #s += " fifo_rx_curr_addr  %#02x\n" % self.get_fifo_rx_current_addr()
         #s += " fifo_rx_byte_addr  %#02x\n" % self.get_fifo_rx_byte_addr()
         s += " status             %s\n" % self.SX1272_get_modem_status()
-        s += " version            %#02x\n" % self.get_version()
+        s += " version            %#02x\n" % self.SX127X_get_version()
         return s
 
 

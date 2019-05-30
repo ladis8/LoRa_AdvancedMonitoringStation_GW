@@ -23,6 +23,7 @@ class RPI_BOARD:
     DIO3 = 22
     RST = 17
     LED = 18
+    NSS = 25
 
     SPI = None
 
@@ -31,6 +32,9 @@ class RPI_BOARD:
         self.io_setup()
         #self.lcd = CharLCD(cols = 16, rows = 2, pin_rs = 33, pin_e = 35, pins_data=[37, 36, 40, 38], numbering_mode=GPIO.BCM)
         #self.lcd.write_string(u"LoRa node id=5 connected!")
+
+    def clean(self):
+        GPIO.cleanup()
 
 
     @staticmethod
@@ -48,6 +52,7 @@ class RPI_BOARD:
         GPIO.setup(RPI_BOARD.DIO0, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
         #RST, DIO
         GPIO.setup(RPI_BOARD.RST, GPIO.OUT)
+        GPIO.setup(RPI_BOARD.NSS, GPIO.OUT)
         GPIO.setup(RPI_BOARD.DIO0, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
         GPIO.setup(RPI_BOARD.DIO1, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
         GPIO.setup(RPI_BOARD.DIO3, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
@@ -96,6 +101,15 @@ class RPI_BOARD:
         RPI_BOARD.pin_write(pin, 0)
         time.sleep(0.1)
 
+    @staticmethod
+    def pin_reset_inverse(pin):
+        RPI_BOARD.pin_write(pin, 0)
+        time.sleep(0.1)
+        RPI_BOARD.pin_write(pin, 1)
+        time.sleep(0.1)
+
+
+
 
     @staticmethod
     def SPI_write_buffer(reg_addr, buffer):
@@ -103,31 +117,42 @@ class RPI_BOARD:
             buffer = list(map(ord, buffer))
         if reg_addr > 0xFF or any(el > 0xFF for el in buffer):
             logging.error("Address not within range or values overflow")
+
+        RPI_BOARD.pin_write(RPI_BOARD.NSS, 0)
         reg_addr |= 0x80
         RPI_BOARD.SPI.xfer2([reg_addr] + buffer)[1]
+        RPI_BOARD.pin_write(RPI_BOARD.NSS, 1)
 
     @staticmethod
     def SPI_read_buffer(reg_addr, length):
         if reg_addr > 0xFF:
             logging.error("Address not within range")
             return None
+        RPI_BOARD.pin_write(RPI_BOARD.NSS, 0)
         reg_addr &= 0x7F
-        return RPI_BOARD.SPI.xfer2([reg_addr] + [0x00] * length)
+        ret = RPI_BOARD.SPI.xfer2([reg_addr] + [0x00] * length)
+        RPI_BOARD.pin_write(RPI_BOARD.NSS, 1)
+        return ret
 
     @staticmethod
     def SPI_write_register(reg_addr, value):
         if reg_addr > 0xFF or value > 0xFF:
             logging.error("Address not within range or values overflow")
+        RPI_BOARD.pin_write(RPI_BOARD.NSS, 0)
         reg_addr |= 0x80
         RPI_BOARD.SPI.xfer([reg_addr, value])[1]
+        RPI_BOARD.pin_write(RPI_BOARD.NSS, 1)
 
     @staticmethod
     def SPI_read_register(reg_addr):
         if reg_addr > 0xFF:
             logging.error("Address not within range")
             return None
+        RPI_BOARD.pin_write(RPI_BOARD.NSS, 0)
         reg_addr &= 0x7F
-        return RPI_BOARD.SPI.xfer([reg_addr, 0x00])
+        ret = RPI_BOARD.SPI.xfer([reg_addr, 0x00])
+        RPI_BOARD.pin_write(RPI_BOARD.NSS, 1)
+        return ret
 
 
 
