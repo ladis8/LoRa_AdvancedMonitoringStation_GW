@@ -1,3 +1,11 @@
+"""
+\file       radio_packet.py
+\author     Ladislav Stefka
+\brief      Definition of binary radio protocol between central unit and measuring units
+            - defines radio packets used in application
+\copyright
+"""
+
 import binascii
 from struct import pack, unpack
 import json
@@ -15,7 +23,9 @@ PAT_STR8 = "8s"
 # [0] CMD
 # [1] ID
 # [2] DATA_TYPE !OPTIONAL
-class RadioPacket():
+
+class RadioPacket:
+    """General radio packet class"""
 
     RES_RESULT_OK = 0,
     RES_ERROR = 1,
@@ -77,12 +87,6 @@ class RadioPacket():
     def getName(self):
         return self.__class__.__name__
 
-
-class Hello(RadioPacket):
-    CMD = 0x01
-
-    def __init__(self):
-        super().__init__()
 
 #region Join Process
 class JoinRequest(RadioPacket):

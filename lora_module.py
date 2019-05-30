@@ -1,10 +1,13 @@
-#TODO: Read version
-#TODO: Refactor set_mode
+"""
+\file       lora_module.py
+\author     Ladislav Stefka
+\brief      API for Semtech SX1272/1276 chips 
+\copyright
+"""
 
 #works only in LoRa mode
 
 from enum import Enum
-import datetime
 
 from rpi_board import *
 from tools import *

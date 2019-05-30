@@ -1,3 +1,10 @@
+"""
+\file       config.py
+\author     Ladislav Stefka
+\brief      Object for holding configuration of LoRa Node
+\copyright
+"""
+
 import requests
 import logging
 from collections import OrderedDict

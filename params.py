@@ -1,3 +1,10 @@
+"""
+\file       params.py
+\author     Ladislav Stefka
+\brief      Object for holding params of LoRa Node
+\copyright
+"""
+
 import requests
 
 URL_PARAMS = "http://127.0.0.1:1880/lora_nodered/node_params"
@@ -47,16 +54,3 @@ class Params:
                 params.__dict__[key] = row[key]
         params.sessionid = int(params.sessionid, 16)
 
-    @staticmethod
-    def UDP_get_params_fromDB(socket, params, address):
-
-        out = req.json()
-
-        if not len(out):
-            raise Exception("No DB item for loranode with address {}".format(address))
-
-        for row in out:
-            assert len(out) == 1
-            for key in row:
-                params.__dict__[key] = row[key]
-        params.sessionid = int(params.sessionid, 16)

@@ -1,3 +1,10 @@
+"""
+\file       json_packet.py
+\author     Ladislav Stefka
+\brief      Definition of UDP protocol in JSON between Node-RED server and central unit 
+\copyright
+"""
+
 import datetime
 import logging
 import json
@@ -7,6 +14,7 @@ import config as cfg
 
 
 class JsonPacket:
+    """General JSON packet class"""
 
     def __init__(self, data=None):
         #received packet

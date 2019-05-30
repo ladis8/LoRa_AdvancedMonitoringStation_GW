@@ -1,7 +1,15 @@
+"""
+\file       rpi_board.py
+\author     Ladislav Stefka
+\brief      API for handling Raspberry Pi hardware 
+            - defines GPIO pins operations
+            - defines SPI operations
+\copyright
+"""
+
 #import wiringpi
 import time
 import logging
-from RPLCD import CharLCD
 import RPi.GPIO as GPIO
 import spidev
 
@@ -30,8 +38,6 @@ class RPI_BOARD:
 
     def __init__(self):
         self.io_setup()
-        #self.lcd = CharLCD(cols = 16, rows = 2, pin_rs = 33, pin_e = 35, pins_data=[37, 36, 40, 38], numbering_mode=GPIO.BCM)
-        #self.lcd.write_string(u"LoRa node id=5 connected!")
 
     def clean(self):
         GPIO.cleanup()
@@ -39,10 +45,6 @@ class RPI_BOARD:
 
     @staticmethod
     def io_setup():
-        #wiringpi.wiringPiSetup()
-        #wiringpi.wiringPiSPISetup(SPI_channel, SPI_speed)
-        #wiringpi.pinMode(dio0_pin, 0)
-        #wiringpi.pinMode(RST_pin, 1)
         GPIO.setmode(GPIO.BCM)
         #SPI
         RPI_BOARD.spi_setup()
@@ -90,14 +92,11 @@ class RPI_BOARD:
     @staticmethod
     def pin_read (pin):
         return GPIO.input(pin)
-        #return wiringpi.digitalRead(pin)
 
     @staticmethod
     def pin_reset(pin):
-        #wiringpi.digitalWrite(pin, 1)
         RPI_BOARD.pin_write(pin, 1)
         time.sleep(0.1)
-        #wiringpi.digitalWrite(pin, 0)
         RPI_BOARD.pin_write(pin, 0)
         time.sleep(0.1)
 
@@ -153,47 +152,6 @@ class RPI_BOARD:
         ret = RPI_BOARD.SPI.xfer([reg_addr, 0x00])
         RPI_BOARD.pin_write(RPI_BOARD.NSS, 1)
         return ret
-
-
-
-
-    def SPI_read_register_deprecated(self, addr):
-        if addr > 0xFF:
-            logging.error("SPI writes only one byte")
-            return -1
-        #wiringpi.digitalWrite(ss_pin, 1)
-        addr &= 0x7F
-        buf = bytes([addr, 0x00])
-        retlen, retdata = wiringpi.wiringPiSPIDataRW(SPI_channel, buf)
-        #logging.debug("RetData = 0x%s(hex), %s(dec), len %d",
-        #              "".join("{:02X}".format(i) for i in retdata),
-        #              "".join(str(i) + " " for i in retdata),
-        #              retlen)
-        #wiringpi.digitalWrite(ss_pin, 0)
-        return retdata
-
-    def SPI_write_register_deprecated(self, addr, val):
-        if addr > 0xFF or val > 0xFF:
-            logging.error("SPI writes only one byte")
-
-        #wiringpi.digitalWrite(ss_pin, 1)
-        addr |= 0x80
-        buf = bytes([addr, val])
-        retlen, retdata = wiringpi.wiringPiSPIDataRW(SPI_channel, buf)
-        #logging.debug("RetData = 0x%s(hex), %s(dec), len %d",
-        #              "".join("{:02X}".format(i) for i in retdata),
-        #              "".join(str(i) + " " for i in retdata),
-        #              retlen)
-        #wiringpi.digitalWrite(ss_pin, 0)
-
-    #takes buffer in bytes or array of values
-    def SPI_write_buffer_deprecated(self, addr, buffer):
-        if addr > 0xFF:
-            logging.error("Address not within range")
-        addr |= 0x80
-        buffer = bytes([addr]) + bytes(buffer)
-        retlen, retdata = wiringpi.wiringPiSPIDataRW(SPI_channel, buffer)
-
 
 
 

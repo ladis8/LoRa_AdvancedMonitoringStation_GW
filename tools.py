@@ -1,4 +1,12 @@
+"""
+\file       lora_module.py
+\author     Ladislav Stefka
+\brief      Module with additional tools 
+\copyright
+"""
+
 from array import array
+
 def to_uint8t(b):
     return b & 0xFF
 

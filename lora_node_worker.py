@@ -1,27 +1,31 @@
+"""
+\file       lora_node_worker.py
+\author     Ladislav Stefka
+\brief      Object represents connected measuring unit
+            - 3 threads for handling radio and UDP communication
+            - state machine description 
+\copyright
+"""
+
 import threading
 import logging
-#import time
-import datetime
 from queue import Queue, Empty
-from threading import Timer
 import enum
-
-
-
-import radio_packet as rp
-import json_packet as jp
-import config as cfg
-import params as prm
-from packet_forwarder import Gateway
-import tools
-
 import socket
 import requests
 import json
 import datetime
 
 
+import radio_packet as rp
+import json_packet as jp
+import config as cfg
+import params as prm
+import tools
 
+
+
+#TODO: move server ip and urls to separate file
 SERVER_IP = "127.0.0.1"
 SERVER_PORT = 12344
 URL_STATUSINFO = "http://127.0.0.1:1880/lora_nodered/statusinfo"
@@ -35,7 +39,6 @@ class States(enum.IntEnum):
     JOINED = 20
     CONFIGURED = 30
     EXPECTING_CHUNK = 40
-
     ERROR = 100
 
 FFT_NUM_OF_CHUNKS = 32
@@ -175,8 +178,6 @@ class NodeWorker:
         resp = rp.Restart()
         resp.resetConfig = resetConfig
         self.tx_radio_queu.put(resp)
-
-
 
 
 

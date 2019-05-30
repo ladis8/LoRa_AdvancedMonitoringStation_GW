@@ -1,10 +1,16 @@
-import socket
+"""
+\file       ttn_forwarder.py
+\author     Ladislav Stefka
+\brief      Module for communication with TTN network 
+            - not used in final app
+\copyright
+"""
 
+import socket
 import uuid
 from struct import pack
 from json import dumps
 
-# addressing information of target
 
 IP = "52.169.76.203"
 PORT = 1700
@@ -61,6 +67,3 @@ class TTNForwarder:
         self.s.send(packet_data)
 
 
-# enter the data content of the UDP packet as hex
-# initialize a socket, think of it as a cable
-# send the command
